@@ -1,0 +1,548 @@
+#include <GL/gl.h>
+#include <GLFW/glfw3.h>
+#include <stdlib.h>
+#include <leif/leif.h>
+#include <stdint.h>
+#include <string.h>
+
+#include "config.h"
+
+typedef enum {
+  FILTER_ALL = 0,
+  FILTER_COMPLETED,
+  FILTER_LOW,
+  FILTER_MEDIUM,
+  FILTER_HIGH
+} todo_filter;
+
+typedef enum {
+  TAB_DASHBOARD = 0,
+  TAB_NEW_TASK
+} tab;
+
+typedef enum {
+  PRIORITY_LOW = 0,
+  PRIORITY_MEDIUM,
+  PRIORITY_HIGH
+} entry_priority;
+
+typedef struct {
+  bool completed;
+  char* desc, *date;
+
+  entry_priority priority;
+} todo_entry;
+
+typedef struct {
+  todo_entry* entries;
+  uint32_t count, cap;
+} entries_da;
+
+typedef struct {
+  GLFWwindow* win;
+  int32_t winw, winh;
+
+  todo_filter crnt_filter;
+  tab crnt_tab;
+  entries_da todo_entries;
+
+  LfFont titlefont, smallfont;
+
+  LfInputField new_task_input;
+  char new_task_input_buf[INPUT_BUF_SIZE];
+
+  LfTexture backicon, removeicon, tickicon;
+} state;
+
+static void resizecb(GLFWwindow* win, int32_t w, int32_t h);
+static void rendertopbar();
+static void renderfilters();
+static void renderentries();
+
+static void initwin();
+static void initui();
+static void terminate();
+
+static void renderdashboard();
+static void rendernewtask();
+
+static void entries_da_init(entries_da* da); 
+static void entries_da_push(entries_da* da, todo_entry entry);  
+static void entries_da_remove_i(entries_da* da, uint32_t i); 
+
+static char* get_command_output(const char* cmd);
+
+static state s;
+
+void 
+resizecb(GLFWwindow* win, int32_t w, int32_t h) {
+  s.winw = w;
+  s.winh = h;
+  lf_resize_display(w, h);
+  glViewport(0, 0, w, h);
+}
+
+void 
+rendertopbar() {
+  // Title
+  lf_push_font(&s.titlefont);
+  {
+    LfUIElementProps props = lf_get_theme().text_props;
+    lf_push_style_props(props);
+    lf_text("Your To Do");
+    lf_pop_style_props();
+  }
+  lf_pop_font();
+
+  // Button
+  {
+    const char* text = "New Task";
+    const float width = 150.0f;
+
+    // UI Properties
+    LfUIElementProps props = lf_get_theme().button_props;
+    props.border_width = 0.0f;
+    props.margin_top = 0.0f;
+    props.color = SECONDARY_COLOR;
+    props.corner_radius = 4.0f;
+    lf_push_style_props(props);
+    lf_set_ptr_x_absolute(s.winw - width - GLOBAL_MARGIN * 2.0f);
+
+    // Button
+    lf_set_line_should_overflow(false); 
+    if(lf_button_fixed("New Task", width, -1) == LF_CLICKED) {
+      s.crnt_tab = TAB_NEW_TASK;
+    }
+    lf_set_line_should_overflow(true);
+
+    lf_pop_style_props();
+  }
+}
+
+void 
+renderfilters() {
+  // Filters 
+  uint32_t itemcount = 5;
+  static const char* items[] = {
+    "ALL", "COMPLETED", "LOW", "MEDIUM", "HIGH"
+  };
+
+  // UI Properties
+  LfUIElementProps props = lf_get_theme().button_props;
+  props.margin_left = 10.0f;
+  props.margin_right = 10.0f;
+  props.margin_top = 20.0f;
+  props.padding = 10.0f;
+  props.border_width = 0.0f;
+  props.color = LF_NO_COLOR;
+  props.corner_radius = 8.0f;
+  props.text_color = LF_WHITE;
+
+  lf_push_font(&s.smallfont);
+
+  // Calculating width
+  float width = 0.0f;
+  {
+    float ptrx_before = lf_get_ptr_x();
+    lf_push_style_props(props);
+    lf_set_cull_end_x(s.winw);
+    lf_set_cull_end_y(s.winh);
+    lf_set_no_render(true);
+    for(uint32_t i = 0; i < itemcount; i++) {
+      lf_button(items[i]);
+    }
+    lf_unset_cull_end_x();
+    lf_unset_cull_end_y();
+    lf_set_no_render(false);
+    width = lf_get_ptr_x() - ptrx_before - props.margin_right - props.padding;
+  }
+
+  lf_set_ptr_x_absolute(s.winw - width - GLOBAL_MARGIN);
+
+  // Rendering the filter items
+  lf_set_line_should_overflow(false);
+  for(uint32_t i = 0; i < itemcount; i++) {
+    // If the filter is currently selected, render a 
+    // box around it to indicate selection.
+    if(s.crnt_filter == (uint32_t)i) {
+      props.color = (LfColor){255, 255, 255, 50};
+    } else {
+      props.color = LF_NO_COLOR;
+    }
+    // Rendering the button
+    lf_push_style_props(props);
+    if(lf_button(items[i]) == LF_CLICKED) {
+      s.crnt_filter = i;
+    }
+    lf_pop_style_props();
+  }
+  // Popping props
+  lf_set_line_should_overflow(true);
+  lf_pop_style_props();
+  lf_pop_font();
+}
+
+void 
+renderentries() {
+  lf_div_begin(((vec2s){lf_get_ptr_x(), lf_get_ptr_y()}), 
+               ((vec2s){(s.winw - lf_get_ptr_x()) - GLOBAL_MARGIN, (s.winh - lf_get_ptr_y()) - GLOBAL_MARGIN}), 
+               false);
+
+  uint32_t renderedcount = 0;
+  for(uint32_t i = 0; i < s.todo_entries.count; i++) {
+    todo_entry* entry = &s.todo_entries.entries[i];
+    if(s.crnt_filter == FILTER_COMPLETED && !entry->completed) continue;
+    if(s.crnt_filter == FILTER_LOW && entry->priority != PRIORITY_LOW) continue;
+    if(s.crnt_filter == FILTER_MEDIUM && entry->priority != PRIORITY_MEDIUM) continue;
+    if(s.crnt_filter == FILTER_HIGH && entry->priority != PRIORITY_HIGH) continue;
+
+    {
+      float ptry_before = lf_get_ptr_y();
+      lf_set_ptr_y_absolute(lf_get_ptr_y() + 13.5f);
+      lf_set_ptr_x_absolute(lf_get_ptr_x() + 5.0f);
+      switch (entry->priority) {
+        case PRIORITY_LOW: {
+          lf_rect(15, 15, (LfColor){76, 175, 80, 255}, 4.0f);
+          break;
+        }
+        case PRIORITY_MEDIUM: {
+          lf_rect(15, 15, (LfColor){255, 235, 59, 255}, 4.0f);
+          break;
+        }
+        case PRIORITY_HIGH: {
+          lf_rect(15, 15, (LfColor){244, 67, 54, 255}, 4.0f);
+          break;
+        }
+      }
+      lf_set_ptr_y_absolute(ptry_before);
+    }
+    {
+      LfUIElementProps props = lf_get_theme().button_props;
+      props.color = LF_NO_COLOR;
+      props.border_width = 0.0f;
+      props.padding = 0.0f;
+      props.margin_top = 8;
+      props.margin_left = 10.0f;
+      lf_push_style_props(props);
+      lf_image_button(((LfTexture){.id = s.removeicon.id, .width = 25, .height = 25}));
+      lf_pop_style_props();
+    }
+    {
+      LfUIElementProps props = lf_get_theme().checkbox_props;
+      props.border_width = 1.0f;
+      props.color = BG_COLOR;
+      lf_push_style_props(props);
+      lf_checkbox("", &entry->completed, LF_NO_COLOR, SECONDARY_COLOR);
+      lf_pop_style_props();
+    }
+
+    float textptrx = lf_get_ptr_x();
+    lf_text(entry->desc);
+
+    lf_set_ptr_x_absolute(textptrx);
+    lf_set_ptr_y_absolute(lf_get_ptr_y() + lf_get_theme().font.font_size);
+    {
+      LfUIElementProps props = lf_get_theme().text_props;
+      props.margin_top = 2.5f;
+      props.text_color = (LfColor){150, 150, 150, 255};
+      lf_push_style_props(props);
+      lf_push_font(&s.smallfont);
+      lf_text(entry->date);
+      lf_pop_font();
+      lf_pop_style_props();
+    }
+    lf_next_line();
+    renderedcount++;
+  }
+
+  if(!renderedcount) {
+    lf_text("There is nothing here.");
+  }
+
+  lf_div_end();
+}
+
+void 
+initwin() {
+  // Initialize GLFW
+  glfwInit();
+
+  // Setting base window width
+  s.winw = WIN_INIT_W;
+  s.winh = WIN_INIT_H;
+
+  // Creating & initializing window and UI library
+  s.win = glfwCreateWindow(s.winw, s.winh, "todo", NULL, NULL);
+  glfwMakeContextCurrent(s.win);
+  glfwSetFramebufferSizeCallback(s.win, resizecb);
+  lf_init_glfw(s.winw, s.winh, s.win);
+}
+
+void 
+initui() {
+  // Initializing fonts
+  s.titlefont = lf_load_font(BOLD_FONT, 40);
+  s.smallfont = lf_load_font(FONT, 20);
+
+  s.crnt_filter = FILTER_ALL;
+
+  // Initializing base theme
+  LfTheme theme = lf_get_theme();
+  theme.div_props.color = LF_NO_COLOR;
+  lf_free_font(&theme.font);
+  theme.font = lf_load_font(FONT, 24);
+  lf_set_theme(theme);
+
+  // Initializing retained state
+  memset(s.new_task_input_buf, 0, INPUT_BUF_SIZE);
+  s.new_task_input = (LfInputField){
+    .width = 400,
+    .buf = s.new_task_input_buf,
+    .buf_size = INPUT_BUF_SIZE,
+    .placeholder = (char*)"What is there to do?"
+  };
+
+  s.tickicon = lf_load_texture("./icons/tick.png", true, LF_TEX_FILTER_LINEAR);
+  s.backicon = lf_load_texture("./icons/back.png", true, LF_TEX_FILTER_LINEAR);
+  s.removeicon = lf_load_texture("./icons/remove.png", true, LF_TEX_FILTER_LINEAR);
+
+  entries_da_init(&s.todo_entries);
+  entries_da_push(&s.todo_entries, (todo_entry){
+    .desc = "This is a new entry.",
+    .date = get_command_output("date +\"%d.%m.%Y, %H:%M\""),
+    .completed = false
+  });
+}
+
+void 
+terminate() {
+  // Terminate UI library
+  lf_terminate();
+
+  // Freeing allocated resources
+  lf_free_font(&s.smallfont);
+  lf_free_font(&s.titlefont);
+
+  // Terminate Windowing
+  glfwDestroyWindow(s.win);
+  glfwTerminate();
+}
+void 
+renderdashboard() {
+  rendertopbar();
+  lf_next_line();
+  renderfilters();
+  lf_next_line();
+  renderentries();
+}
+
+void 
+rendernewtask() {
+  // Title
+  lf_push_font(&s.titlefont);
+  {
+    LfUIElementProps props = lf_get_theme().text_props;
+    props.margin_bottom = 15.0f;
+    lf_push_style_props(props);
+    lf_text("Add a new Task");
+    lf_pop_style_props();
+    lf_pop_font();
+  }
+
+  lf_next_line();
+
+  // Description input field 
+  {
+    lf_push_font(&s.smallfont);
+    lf_text("Description");
+    lf_pop_font();
+
+    lf_next_line();
+    LfUIElementProps props = lf_get_theme().inputfield_props;
+    props.padding = 15;
+    props.border_width = 0;
+    props.color = BG_COLOR;
+    props.corner_radius = 11;
+    props.text_color = LF_WHITE;
+    props.border_width = 1.0f;
+    props.border_color = s.new_task_input.selected ? LF_WHITE : (LfColor){170, 170, 170, 255};
+    props.corner_radius = 2.5f;
+    props.margin_bottom = 10.0f;
+    lf_push_style_props(props);
+    lf_input_text(&s.new_task_input);
+    lf_pop_style_props();
+  }
+
+  lf_next_line();
+
+  lf_next_line();
+
+  // Priority dropdown
+  static int32_t selected_priority = -1;
+  {
+    lf_push_font(&s.smallfont);
+    lf_text("Priority");
+    lf_pop_font();
+
+    lf_next_line();
+    static const char* items[3] = {
+      "Low",
+      "Medium",
+      "High"
+    };
+    static bool opened = false;
+    LfUIElementProps props = lf_get_theme().button_props;
+    props.color = (LfColor){70, 70, 70, 255};
+    props.text_color = LF_WHITE;
+    props.border_width = 0.0f;
+    props.corner_radius = 5.0f;
+    lf_push_style_props(props);
+    lf_dropdown_menu(items, "Priority", 3, 200, 80, &selected_priority, &opened);
+    lf_pop_style_props();
+  }
+
+  // Add Button
+  {
+    bool form_complete = (strlen(s.new_task_input_buf) && selected_priority != -1);
+    const char* text = "Add";
+    const float width = 150.0f;
+
+    LfUIElementProps props = lf_get_theme().button_props;
+    props.margin_left = 0.0f;
+    props.margin_right = 0.0f;
+    props.corner_radius = 5.0f;
+    props.border_width = 0.0f;
+    props.color = !form_complete ? (LfColor){80, 80, 80, 255} :  SECONDARY_COLOR; 
+    lf_push_style_props(props);
+    lf_set_line_should_overflow(false);
+    lf_set_ptr_x_absolute(s.winw - (width + lf_get_theme().button_props.padding * 2.0f) - GLOBAL_MARGIN);
+    lf_set_ptr_y_absolute(s.winh - (lf_button_dimension(text).y + lf_get_theme().button_props.padding * 2.0f) - GLOBAL_MARGIN);
+
+    if(lf_button_fixed(text, width, -1) == LF_CLICKED && form_complete) {
+      char* desc = malloc(strlen(s.new_task_input_buf));
+      strcpy(desc, s.new_task_input_buf);
+      entries_da_push(&s.todo_entries, (todo_entry){
+        .priority = (entry_priority)selected_priority,
+        .completed = false,
+        .date = get_command_output("date +\"%d.%m.%Y, %H:%M\""),
+        .desc = desc
+      });
+      memset(s.new_task_input_buf, 0, sizeof(s.new_task_input_buf));
+      s.new_task_input.cursor_index = 0;
+      lf_input_field_unselect_all(&s.new_task_input);
+    }
+    lf_set_line_should_overflow(true);
+    lf_pop_style_props();
+  }
+
+  // Back Icon button
+  lf_next_line();
+  {
+    LfUIElementProps props = lf_get_theme().button_props;
+    props.color = LF_NO_COLOR;
+    props.border_width = 0.0f;
+    props.padding = 0.0f;
+    props.margin_left = 0.0f;
+    props.margin_right = 0.0f;
+    props.margin_top = 0.0f;
+    props.margin_bottom = 0.0f;
+    lf_push_style_props(props);
+    lf_set_line_should_overflow(false);
+    LfTexture backbutton = (LfTexture){.id = s.backicon.id, .width = 20, .height = 40};
+    lf_set_ptr_y_absolute(s.winh - backbutton.height - GLOBAL_MARGIN * 2.0f);
+    lf_set_ptr_x_absolute(GLOBAL_MARGIN);
+
+    if(lf_image_button(backbutton) == LF_CLICKED) {
+      s.crnt_tab = TAB_DASHBOARD;
+    }
+
+    lf_set_line_should_overflow(true);
+    lf_pop_style_props();
+  }
+}
+
+void 
+entries_da_init(entries_da* da) {
+  da->cap = DA_INIT_CAP;
+  da->count = 0;
+  da->entries = (todo_entry*)malloc(sizeof(todo_entry) * da->cap);
+}
+
+void 
+entries_da_push(entries_da* da, todo_entry entry) {
+  if(da->count + 1 > da->cap) {
+    da->entries = (todo_entry*)realloc(da->entries, da->cap);
+  }
+  da->entries[da->count++] = entry;
+}
+
+void 
+entries_da_remove_i(entries_da* da, uint32_t i) {
+  (void)da;
+  (void)i;
+}
+
+char* 
+get_command_output(const char* cmd) {
+    FILE *fp;
+    char buffer[1024];
+    char *result = NULL;
+    size_t result_size = 0;
+
+    fp = popen(cmd, "r");
+    if (fp == NULL) {
+        printf("Failed to run command\n");
+        return NULL;
+    }
+
+    while (fgets(buffer, sizeof(buffer), fp) != NULL) {
+        size_t buffer_len = strlen(buffer);
+        char *temp = realloc(result, result_size + buffer_len + 1);
+        if (temp == NULL) {
+            printf("Memory allocation failed\n");
+            free(result);
+            pclose(fp);
+            return NULL;
+        }
+        result = temp;
+        strcpy(result + result_size, buffer);
+        result_size += buffer_len;
+    }
+    pclose(fp);
+    return result;
+}
+
+int 
+main() {
+  initwin();
+  initui();
+
+  vec4s bgcol = lf_color_to_zto(BG_COLOR);
+  while(!glfwWindowShouldClose(s.win)) {
+    glClear(GL_COLOR_BUFFER_BIT);
+    glClearColor(bgcol.r, bgcol.g, bgcol.b, bgcol.a);
+
+    lf_begin();
+   
+    // Beginning the root div
+    lf_div_begin(((vec2s){GLOBAL_MARGIN, GLOBAL_MARGIN}), ((vec2s){s.winw - GLOBAL_MARGIN * 2.0f, s.winh - GLOBAL_MARGIN * 2.0f}), true);
+
+    switch (s.crnt_tab) {
+      case TAB_DASHBOARD:
+        renderdashboard();
+        break;
+      case TAB_NEW_TASK:
+        rendernewtask();
+        break;
+    }
+
+    // Ending the root div 
+    lf_div_end();
+    lf_end();
+
+    glfwPollEvents();
+    glfwSwapBuffers(s.win);
+  }
+  terminate();
+  return EXIT_SUCCESS;
+}
