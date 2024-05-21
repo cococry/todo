@@ -1,2 +1,13 @@
+CC=gcc
+BIN=todo
+SOURCE=*.c
+LIBS=-lglfw -lleif -lclipboard -lm -lGL -lxcb
+
 all:
-	gcc -o todo todo.c -lglfw -lleif -lclipboard -lm -lGL -lxcb
+	${CC} -o ${BIN} ${SOURCE} ${LIBS}
+
+clean:
+	rm -f ${BIN}
+
+install:
+	cp ${BIN} /usr/bin/

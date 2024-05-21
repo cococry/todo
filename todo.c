@@ -52,10 +52,11 @@ typedef struct {
 
   LfInputField new_task_input;
   char new_task_input_buf[INPUT_BUF_SIZE];
-
   LfTexture backicon, removeicon;
 
   FILE* serialization_file;
+
+  char todo_data_filepath[128];
 } state;
 
 static void         resizecb(GLFWwindow* win, int32_t w, int32_t h);
@@ -242,7 +243,7 @@ renderentries() {
       lf_push_style_props(props);
       if(lf_image_button(((LfTexture){.id = s.removeicon.id, .width = 20, .height = 20})) == LF_CLICKED) {
         entries_da_remove_i(&s.todo_entries, i);
-        serialize_todo_list(TODO_DATA_FILE, &s.todo_entries);
+        serialize_todo_list(s.todo_data_filepath, &s.todo_entries);
       }
       lf_pop_style_props();
     }
@@ -255,7 +256,7 @@ renderentries() {
       props.color = BG_COLOR;
       lf_push_style_props(props);
       if(lf_checkbox("", &entry->completed, LF_NO_COLOR, SECONDARY_COLOR) == LF_CLICKED) {
-        serialize_todo_list(TODO_DATA_FILE, &s.todo_entries);
+        serialize_todo_list(s.todo_data_filepath, &s.todo_entries);
       }
       lf_pop_style_props();
     }
@@ -333,7 +334,9 @@ initui() {
   s.removeicon = lf_load_texture("./icons/remove.png", true, LF_TEX_FILTER_LINEAR);
 
   entries_da_init(&s.todo_entries);
-  deserialize_todo_list(TODO_DATA_FILE, &s.todo_entries);
+  strcat(s.todo_data_filepath, TODO_DATA_FILE_DIR);
+  strcat(s.todo_data_filepath, "/.tododata");
+  deserialize_todo_list(s.todo_data_filepath, &s.todo_entries);
 }
 
 void 
@@ -459,7 +462,7 @@ rendernewtask() {
       sort_entries_by_priority(&s.todo_entries);
 
       // Serialize entries 
-      serialize_todo_list(TODO_DATA_FILE, &s.todo_entries);
+      serialize_todo_list(s.todo_data_filepath, &s.todo_entries);
 
       // Reset interface state
       memset(s.new_task_input_buf, 0, sizeof(s.new_task_input_buf));
@@ -687,7 +690,7 @@ void deserialize_todo_list(const char* filename, entries_da* da) {
   FILE *file = fopen(filename, "rb");
   if(!file) {
     // If file does not exist, create it 
-    file = fopen(TODO_DATA_FILE, "w");
+    file = fopen(filename, "w");
     fclose(file);
   }
   file = fopen(filename, "rb");

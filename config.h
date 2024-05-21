@@ -20,4 +20,4 @@
 
 #define DATE_CMD "date +\"%d.%m.%Y, %H:%M\""
 
-#define TODO_DATA_FILE "./tododata.bin"
+#define TODO_DATA_FILE_DIR getenv("HOME")
