@@ -25,7 +25,8 @@ typedef enum {
 typedef enum {
   PRIORITY_LOW = 0,
   PRIORITY_MEDIUM,
-  PRIORITY_HIGH
+  PRIORITY_HIGH, 
+  PRIORITY_COUNT
 } entry_priority;
 
 typedef struct {
@@ -56,7 +57,7 @@ typedef struct {
 
   FILE* serialization_file;
 
-  char todo_data_filepath[128];
+  char tododata_file[128];
 } state;
 
 static void         resizecb(GLFWwindow* win, int32_t w, int32_t h);
@@ -215,21 +216,34 @@ renderentries() {
 
     {
       float ptry_before = lf_get_ptr_y();
-      lf_set_ptr_y_absolute(lf_get_ptr_y() + 15);
+      float priority_size = 15.0f;
+      lf_set_ptr_y_absolute(lf_get_ptr_y() + priority_size);
       lf_set_ptr_x_absolute(lf_get_ptr_x() + 5.0f);
+      bool clicked_priority = lf_hovered((vec2s){lf_get_ptr_x(), lf_get_ptr_y()}, (vec2s){priority_size, priority_size}) &&
+                              lf_mouse_button_went_down(GLFW_MOUSE_BUTTON_LEFT);
+      if(clicked_priority) {
+        if(entry->priority + 1 >= PRIORITY_COUNT) {
+          entry->priority = 0;
+        } else {
+          entry->priority++;
+        }
+        sort_entries_by_priority(&s.todo_entries);
+      }
       switch (entry->priority) {
         case PRIORITY_LOW: {
-          lf_rect(15, 15, (LfColor){76, 175, 80, 255}, 4.0f);
+          lf_rect(priority_size, priority_size, (LfColor){76, 175, 80, 255}, 4.0f);
           break;
         }
         case PRIORITY_MEDIUM: {
-          lf_rect(15, 15, (LfColor){255, 235, 59, 255}, 4.0f);
+          lf_rect(priority_size, priority_size, (LfColor){255, 235, 59, 255}, 4.0f);
           break;
         }
         case PRIORITY_HIGH: {
-          lf_rect(15, 15, (LfColor){244, 67, 54, 255}, 4.0f);
+          lf_rect(priority_size, priority_size, (LfColor){244, 67, 54, 255}, 4.0f);
           break;
         }
+        default:
+          break;
       }
       lf_set_ptr_y_absolute(ptry_before);
     }
@@ -243,7 +257,7 @@ renderentries() {
       lf_push_style_props(props);
       if(lf_image_button(((LfTexture){.id = s.removeicon.id, .width = 20, .height = 20})) == LF_CLICKED) {
         entries_da_remove_i(&s.todo_entries, i);
-        serialize_todo_list(s.todo_data_filepath, &s.todo_entries);
+        serialize_todo_list(s.tododata_file, &s.todo_entries);
       }
       lf_pop_style_props();
     }
@@ -256,7 +270,7 @@ renderentries() {
       props.color = BG_COLOR;
       lf_push_style_props(props);
       if(lf_checkbox("", &entry->completed, LF_NO_COLOR, SECONDARY_COLOR) == LF_CLICKED) {
-        serialize_todo_list(s.todo_data_filepath, &s.todo_entries);
+        serialize_todo_list(s.tododata_file, &s.todo_entries);
       }
       lf_pop_style_props();
     }
@@ -306,7 +320,7 @@ initwin() {
 void 
 initui() {
   // Initializing fonts
-  s.titlefont = lf_load_font(BOLD_FONT, 40);
+  s.titlefont = lf_load_font(FONT_BOLD, 40);
   s.smallfont = lf_load_font(FONT, 20);
 
   s.crnt_filter = FILTER_ALL;
@@ -330,13 +344,15 @@ initui() {
     .placeholder = (char*)"What is there to do?"
   };
 
-  s.backicon = lf_load_texture("./icons/back.png", true, LF_TEX_FILTER_LINEAR);
-  s.removeicon = lf_load_texture("./icons/remove.png", true, LF_TEX_FILTER_LINEAR);
+  s.backicon = lf_load_texture(BACK_ICON, true, LF_TEX_FILTER_LINEAR);
+  s.removeicon = lf_load_texture(REMOVE_ICON, true, LF_TEX_FILTER_LINEAR);
+
+  strcat(s.tododata_file, TODO_DATA_DIR);
+  strcat(s.tododata_file, "/");
+  strcat(s.tododata_file, TODO_DATA_FILE);
 
   entries_da_init(&s.todo_entries);
-  strcat(s.todo_data_filepath, TODO_DATA_FILE_DIR);
-  strcat(s.todo_data_filepath, "/.tododata");
-  deserialize_todo_list(s.todo_data_filepath, &s.todo_entries);
+  deserialize_todo_list(s.tododata_file, &s.todo_entries);
 }
 
 void 
@@ -462,7 +478,7 @@ rendernewtask() {
       sort_entries_by_priority(&s.todo_entries);
 
       // Serialize entries 
-      serialize_todo_list(s.todo_data_filepath, &s.todo_entries);
+      serialize_todo_list(s.tododata_file, &s.todo_entries);
 
       // Reset interface state
       memset(s.new_task_input_buf, 0, sizeof(s.new_task_input_buf));
@@ -617,6 +633,10 @@ serialize_todo_entry(FILE* file, todo_entry* entry) {
 void
 serialize_todo_list(const char* filename, entries_da* da) {
   FILE* file = fopen(filename, "wb");
+  if(!file) {
+    printf("Failed to open data file.\n");
+    return;
+  }
   for(uint32_t i = 0; i < da->count; i++) {
     serialize_todo_entry(file, da->entries[i]);
   }

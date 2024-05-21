@@ -11,3 +11,9 @@ clean:
 
 install:
 	cp ${BIN} /usr/bin/
+	cp ./todo.desktop /usr/share/applications
+	@mkdir -p /usr/share/icons/todo
+	cp ./appicon/appicon.png /usr/share/icons/todo
+	@mkdir -p /usr/share/todo
+	cp -r ./fonts/ /usr/share/todo/
+	cp -r ./icons/ /usr/share/todo/

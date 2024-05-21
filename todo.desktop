@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+TryExec=todo
+Exec=todo
+Icon=/usr/share/icons/todo/appicon.png
+Terminal=false
+Categories=Utility;Office;
+
+Name=todo
+GenericName=Task Management
+Comment=A suckless task management program
