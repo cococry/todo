@@ -14,6 +14,7 @@
 
 #define BACK_ICON "/usr/share/todo/icons/back.png"
 #define REMOVE_ICON "/usr/share/todo/icons/remove.png"
+#define RAISE_ICON "/usr/share/todo/icons/raise.png"
 
 #define GLOBAL_MARGIN 25.0f
 

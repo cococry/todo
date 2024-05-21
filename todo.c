@@ -53,7 +53,7 @@ typedef struct {
 
   LfInputField new_task_input;
   char new_task_input_buf[INPUT_BUF_SIZE];
-  LfTexture backicon, removeicon;
+  LfTexture backicon, removeicon, raiseicon;
 
   FILE* serialization_file;
 
@@ -250,10 +250,7 @@ renderentries() {
     {
       LfUIElementProps props = lf_get_theme().button_props;
       props.color = LF_NO_COLOR;
-      props.border_width = 0.0f;
-      props.padding = 0.0f;
-      props.margin_top = 13;
-      props.margin_left = 10.0f;
+      props.border_width = 0.0f; props.padding = 0.0f; props.margin_top = 13; props.margin_left = 10.0f;
       lf_push_style_props(props);
       if(lf_image_button(((LfTexture){.id = s.removeicon.id, .width = 20, .height = 20})) == LF_CLICKED) {
         entries_da_remove_i(&s.todo_entries, i);
@@ -263,10 +260,7 @@ renderentries() {
     }
     {
       LfUIElementProps props = lf_get_theme().checkbox_props;
-      props.border_width = 1.0f;
-      props.corner_radius = 0;
-      props.margin_top = 11;
-      props.padding = 5.0f;
+      props.border_width = 1.0f; props.corner_radius = 0; props.margin_top = 11; props.padding = 5.0f;
       props.color = BG_COLOR;
       lf_push_style_props(props);
       if(lf_checkbox("", &entry->completed, LF_NO_COLOR, SECONDARY_COLOR) == LF_CLICKED) {
@@ -290,10 +284,31 @@ renderentries() {
       lf_pop_font();
       lf_pop_style_props();
     }
+
+    {
+      uint32_t texw = 15, texh = 8;
+      lf_set_ptr_x_absolute(s.winw - GLOBAL_MARGIN - texw);
+      lf_set_line_should_overflow(false);
+      
+      LfUIElementProps props = lf_get_theme().button_props;
+      props.color = LF_NO_COLOR;
+      props.border_width = 0.0f; props.padding = 0.0f; props.margin_left = 0.0f; props.margin_right = 0.0f;
+      lf_push_style_props(props);
+      lf_set_image_color((LfColor){120, 120, 120, 255});
+      if(lf_image_button(((LfTexture){.id = s.raiseicon.id, .width = texw, .height = texh})) == LF_CLICKED) {
+        todo_entry* tmp = s.todo_entries.entries[0];
+        s.todo_entries.entries[0] = entry;
+        s.todo_entries.entries[i] = tmp;
+        serialize_todo_list(s.tododata_file, &s.todo_entries);
+      }
+      lf_unset_image_color();
+      lf_set_line_should_overflow(true);
+      lf_pop_style_props();
+    }
+
     lf_next_line();
     renderedcount++;
   }
-
   if(!renderedcount) {
     lf_text("There is nothing here.");
   }
@@ -346,6 +361,7 @@ initui() {
 
   s.backicon = lf_load_texture(BACK_ICON, true, LF_TEX_FILTER_LINEAR);
   s.removeicon = lf_load_texture(REMOVE_ICON, true, LF_TEX_FILTER_LINEAR);
+  s.raiseicon = lf_load_texture(RAISE_ICON, true, LF_TEX_FILTER_LINEAR);
 
   strcat(s.tododata_file, TODO_DATA_DIR);
   strcat(s.tododata_file, "/");

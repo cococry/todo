@@ -17,3 +17,10 @@ install:
 	@mkdir -p /usr/share/todo
 	cp -r ./fonts/ /usr/share/todo/
 	cp -r ./icons/ /usr/share/todo/
+
+uninstall:
+	rm -f /usr/bin/todo
+	rm -f /usr/share/applications/todo.desktop
+	rm -f ~/.tododata
+	rm -rf /usr/share/icons/todo/
+	rm -rf /usr/share/todo/

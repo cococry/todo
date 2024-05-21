@@ -20,4 +20,22 @@ make && sudo make install
 cd ..
 rm -rf leif
 make && sudo make install
-todo
+echo "====================="
+echo "INSTALLATION FINISHED"
+echo "====================="
+read -p "Do you want to start the app (y/n): " answer
+
+# Convert the answer to lowercase to handle Y/y and N/n
+answer=${answer,,}
+
+# Check the user's response
+if [[ "$answer" == "y" ]]; then
+    echo "Starting..."
+    todo
+elif [[ "$answer" == "n" ]]; then
+    echo "todo has been installed to your system."
+    echo "It can be launched from terminal with 'todo'." 
+    echo "A .desktop file is also installed so you can find it in your application launcher."
+else
+    echo "Invalid input. Please enter y or n."
+fi
