@@ -3,7 +3,7 @@
 #define WIN_INIT_W 1280
 #define WIN_INIT_H 720
 
-#define BG_COLOR (LfColor){21, 22, 26, 255} 
+#define BG_COLOR (LfColor){6, 6, 6, 255} 
 
 #define FONT "./fonts/inter.ttf"
 #define BOLD_FONT "./fonts/inter-bold.ttf"
@@ -14,4 +14,10 @@
 
 #define SECONDARY_COLOR (LfColor){65, 167, 204, 255} 
 
-#define DA_INIT_CAP 32
+#define DA_INIT_CAP 64 
+
+#define SMOOTH_SCROLL false
+
+#define DATE_CMD "date +\"%d.%m.%Y, %H:%M\""
+
+#define TODO_DATA_FILE "./tododata.bin"

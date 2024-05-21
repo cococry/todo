@@ -1,5 +1,6 @@
 #include <GL/gl.h>
 #include <GLFW/glfw3.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <leif/leif.h>
 #include <stdint.h>
@@ -9,6 +10,7 @@
 
 typedef enum {
   FILTER_ALL = 0,
+  FILTER_IN_PROGRESS,
   FILTER_COMPLETED,
   FILTER_LOW,
   FILTER_MEDIUM,
@@ -34,7 +36,7 @@ typedef struct {
 } todo_entry;
 
 typedef struct {
-  todo_entry* entries;
+  todo_entry** entries;
   uint32_t count, cap;
 } entries_da;
 
@@ -51,26 +53,38 @@ typedef struct {
   LfInputField new_task_input;
   char new_task_input_buf[INPUT_BUF_SIZE];
 
-  LfTexture backicon, removeicon, tickicon;
+  LfTexture backicon, removeicon;
+
+  FILE* serialization_file;
 } state;
 
-static void resizecb(GLFWwindow* win, int32_t w, int32_t h);
-static void rendertopbar();
-static void renderfilters();
-static void renderentries();
+static void         resizecb(GLFWwindow* win, int32_t w, int32_t h);
+static void         rendertopbar();
+static void         renderfilters();
+static void         renderentries();
 
-static void initwin();
-static void initui();
-static void terminate();
+static void         initwin();
+static void         initui();
+static void         terminate();
 
-static void renderdashboard();
-static void rendernewtask();
+static void         renderdashboard();
+static void         rendernewtask();
 
-static void entries_da_init(entries_da* da); 
-static void entries_da_push(entries_da* da, todo_entry entry);  
-static void entries_da_remove_i(entries_da* da, uint32_t i); 
+static void         entries_da_init(entries_da* da);
+static void         entries_da_resize(entries_da* da, int32_t new_cap);
+static void         entries_da_push(entries_da* da, todo_entry* entry);  
+static void         entries_da_remove_i(entries_da* da, uint32_t i); 
+static void         entries_da_free(entries_da* da); 
+  
+static int          compare_entry_priority(const void* a, const void* b);
+static void         sort_entries_by_priority(entries_da* da);
 
-static char* get_command_output(const char* cmd);
+static char*        get_command_output(const char* cmd);
+
+static void         serialize_todo_entry(FILE* file, todo_entry* entry);
+static void         serialize_todo_list(const char* filename, entries_da* da);
+static todo_entry*  deserialize_todo_entry(FILE* file);
+static void         deserialize_todo_list(const char* filename, entries_da* da);
 
 static state s;
 
@@ -122,9 +136,9 @@ rendertopbar() {
 void 
 renderfilters() {
   // Filters 
-  uint32_t itemcount = 5;
+  uint32_t itemcount = 6;
   static const char* items[] = {
-    "ALL", "COMPLETED", "LOW", "MEDIUM", "HIGH"
+    "ALL", "IN PROGRESS", "COMPLETED", "LOW", "MEDIUM", "HIGH"
   };
 
   // UI Properties
@@ -186,19 +200,21 @@ void
 renderentries() {
   lf_div_begin(((vec2s){lf_get_ptr_x(), lf_get_ptr_y()}), 
                ((vec2s){(s.winw - lf_get_ptr_x()) - GLOBAL_MARGIN, (s.winh - lf_get_ptr_y()) - GLOBAL_MARGIN}), 
-               false);
+               true);
 
   uint32_t renderedcount = 0;
   for(uint32_t i = 0; i < s.todo_entries.count; i++) {
-    todo_entry* entry = &s.todo_entries.entries[i];
+    todo_entry* entry = s.todo_entries.entries[i];
+    // Filtering the entries
     if(s.crnt_filter == FILTER_COMPLETED && !entry->completed) continue;
+    if(s.crnt_filter == FILTER_IN_PROGRESS && entry->completed) continue;
     if(s.crnt_filter == FILTER_LOW && entry->priority != PRIORITY_LOW) continue;
     if(s.crnt_filter == FILTER_MEDIUM && entry->priority != PRIORITY_MEDIUM) continue;
     if(s.crnt_filter == FILTER_HIGH && entry->priority != PRIORITY_HIGH) continue;
 
     {
       float ptry_before = lf_get_ptr_y();
-      lf_set_ptr_y_absolute(lf_get_ptr_y() + 13.5f);
+      lf_set_ptr_y_absolute(lf_get_ptr_y() + 15);
       lf_set_ptr_x_absolute(lf_get_ptr_x() + 5.0f);
       switch (entry->priority) {
         case PRIORITY_LOW: {
@@ -221,18 +237,26 @@ renderentries() {
       props.color = LF_NO_COLOR;
       props.border_width = 0.0f;
       props.padding = 0.0f;
-      props.margin_top = 8;
+      props.margin_top = 13;
       props.margin_left = 10.0f;
       lf_push_style_props(props);
-      lf_image_button(((LfTexture){.id = s.removeicon.id, .width = 25, .height = 25}));
+      if(lf_image_button(((LfTexture){.id = s.removeicon.id, .width = 20, .height = 20})) == LF_CLICKED) {
+        entries_da_remove_i(&s.todo_entries, i);
+        serialize_todo_list(TODO_DATA_FILE, &s.todo_entries);
+      }
       lf_pop_style_props();
     }
     {
       LfUIElementProps props = lf_get_theme().checkbox_props;
       props.border_width = 1.0f;
+      props.corner_radius = 0;
+      props.margin_top = 11;
+      props.padding = 5.0f;
       props.color = BG_COLOR;
       lf_push_style_props(props);
-      lf_checkbox("", &entry->completed, LF_NO_COLOR, SECONDARY_COLOR);
+      if(lf_checkbox("", &entry->completed, LF_NO_COLOR, SECONDARY_COLOR) == LF_CLICKED) {
+        serialize_todo_list(TODO_DATA_FILE, &s.todo_entries);
+      }
       lf_pop_style_props();
     }
 
@@ -291,6 +315,9 @@ initui() {
   theme.div_props.color = LF_NO_COLOR;
   lf_free_font(&theme.font);
   theme.font = lf_load_font(FONT, 24);
+  theme.scrollbar_props.corner_radius = 2;
+  theme.scrollbar_props.color = lf_color_brightness(BG_COLOR, 3.0);
+  theme.div_smooth_scroll = SMOOTH_SCROLL;
   lf_set_theme(theme);
 
   // Initializing retained state
@@ -302,16 +329,11 @@ initui() {
     .placeholder = (char*)"What is there to do?"
   };
 
-  s.tickicon = lf_load_texture("./icons/tick.png", true, LF_TEX_FILTER_LINEAR);
   s.backicon = lf_load_texture("./icons/back.png", true, LF_TEX_FILTER_LINEAR);
   s.removeicon = lf_load_texture("./icons/remove.png", true, LF_TEX_FILTER_LINEAR);
 
   entries_da_init(&s.todo_entries);
-  entries_da_push(&s.todo_entries, (todo_entry){
-    .desc = "This is a new entry.",
-    .date = get_command_output("date +\"%d.%m.%Y, %H:%M\""),
-    .completed = false
-  });
+  deserialize_todo_list(TODO_DATA_FILE, &s.todo_entries);
 }
 
 void 
@@ -322,6 +344,7 @@ terminate() {
   // Freeing allocated resources
   lf_free_font(&s.smallfont);
   lf_free_font(&s.titlefont);
+  entries_da_free(&s.todo_entries); 
 
   // Terminate Windowing
   glfwDestroyWindow(s.win);
@@ -418,15 +441,27 @@ rendernewtask() {
     lf_set_ptr_x_absolute(s.winw - (width + lf_get_theme().button_props.padding * 2.0f) - GLOBAL_MARGIN);
     lf_set_ptr_y_absolute(s.winh - (lf_button_dimension(text).y + lf_get_theme().button_props.padding * 2.0f) - GLOBAL_MARGIN);
 
-    if(lf_button_fixed(text, width, -1) == LF_CLICKED && form_complete) {
+    // If the user wants to add a new task: 
+    if((lf_button_fixed(text, width, -1) == LF_CLICKED && form_complete) ||
+      (lf_key_went_down(GLFW_KEY_ENTER) && form_complete)) {
+
+      // Copy the description input buffers content to a new pointer
       char* desc = malloc(strlen(s.new_task_input_buf));
       strcpy(desc, s.new_task_input_buf);
-      entries_da_push(&s.todo_entries, (todo_entry){
-        .priority = (entry_priority)selected_priority,
-        .completed = false,
-        .date = get_command_output("date +\"%d.%m.%Y, %H:%M\""),
-        .desc = desc
-      });
+
+      // Allocate a new entry
+      todo_entry* entry = malloc(sizeof(todo_entry));
+      entry->desc = desc;
+      entry->date = get_command_output(DATE_CMD);
+      entry->completed = false;
+      entry->priority = (entry_priority)selected_priority;
+      entries_da_push(&s.todo_entries, entry);
+      sort_entries_by_priority(&s.todo_entries);
+
+      // Serialize entries 
+      serialize_todo_list(TODO_DATA_FILE, &s.todo_entries);
+
+      // Reset interface state
       memset(s.new_task_input_buf, 0, sizeof(s.new_task_input_buf));
       s.new_task_input.cursor_index = 0;
       lf_input_field_unselect_all(&s.new_task_input);
@@ -455,31 +490,70 @@ rendernewtask() {
     if(lf_image_button(backbutton) == LF_CLICKED) {
       s.crnt_tab = TAB_DASHBOARD;
     }
-
     lf_set_line_should_overflow(true);
     lf_pop_style_props();
   }
 }
-
 void 
 entries_da_init(entries_da* da) {
   da->cap = DA_INIT_CAP;
   da->count = 0;
-  da->entries = (todo_entry*)malloc(sizeof(todo_entry) * da->cap);
+  da->entries = (todo_entry**)malloc(sizeof(todo_entry) * da->cap);
 }
 
 void 
-entries_da_push(entries_da* da, todo_entry entry) {
-  if(da->count + 1 > da->cap) {
-    da->entries = (todo_entry*)realloc(da->entries, da->cap);
+entries_da_push(entries_da* da, todo_entry* entry) {
+  if(da->count == da->cap) {
+    entries_da_resize(da, da->cap * 2);
   }
   da->entries[da->count++] = entry;
 }
 
 void 
+entries_da_resize(entries_da* da, int32_t new_cap) {
+    todo_entry** temp = (todo_entry**)realloc(da->entries, new_cap * sizeof(todo_entry));
+    if (!temp) {
+        fprintf(stderr, "Failed to reallocate memory\n");
+        exit(EXIT_FAILURE);
+    }
+    da->entries = temp;
+    da->cap = new_cap;
+}
+
+void 
 entries_da_remove_i(entries_da* da, uint32_t i) {
-  (void)da;
-  (void)i;
+  // Bounds check 
+  if (i < 0 || i >= da->count) {
+    printf("Index out of bounds\n");
+    return;
+  }
+
+  // Remove element
+  for (uint32_t idx = i; idx < da->count - 1; idx++) {
+    da->entries[idx] = da->entries[idx + 1];
+  }
+
+  // Decrease the count
+  da->count--;
+}
+
+void entries_da_free(entries_da* da) {
+  if(da->entries)
+    free(da->entries);
+  da->cap = 0;
+  da->count = 0;
+}
+
+int
+compare_entry_priority(const void* a, const void* b) {
+  todo_entry* entry_a = *(todo_entry**)a;
+  todo_entry* entry_b = *(todo_entry**)b;
+  return (entry_b->priority - entry_a->priority);
+}
+
+void 
+sort_entries_by_priority(entries_da* da) {
+  qsort(da->entries, da->count, sizeof(todo_entry*), compare_entry_priority);
 }
 
 char* 
@@ -489,12 +563,14 @@ get_command_output(const char* cmd) {
     char *result = NULL;
     size_t result_size = 0;
 
+    // Opening a new pipe with the fiven command
     fp = popen(cmd, "r");
     if (fp == NULL) {
         printf("Failed to run command\n");
         return NULL;
     }
 
+    // Reading the output
     while (fgets(buffer, sizeof(buffer), fp) != NULL) {
         size_t buffer_len = strlen(buffer);
         char *temp = realloc(result, result_size + buffer_len + 1);
@@ -511,6 +587,117 @@ get_command_output(const char* cmd) {
     pclose(fp);
     return result;
 }
+
+void 
+serialize_todo_entry(FILE* file, todo_entry* entry) {
+  // Write completed to file
+  fwrite(&entry->completed, sizeof(bool), 1, file);
+
+  // Write description to file
+  size_t desc_len = strlen(entry->desc) + 1; // +1 for null terminator
+  // Writing the description length to the file for later 
+  // deserialization
+  fwrite(&desc_len, sizeof(size_t), 1, file);
+  fwrite(entry->desc, sizeof(char), desc_len, file);
+
+  // Write date to file
+  size_t date_len = strlen(entry->date) + 1; // +1 for null terminator
+  // Writing the date length to the file for later 
+  // deserialization
+  fwrite(&date_len, sizeof(size_t), 1, file);
+  fwrite(entry->date, sizeof(char), date_len, file);
+
+  // Write priority to file
+  fwrite(&entry->priority, sizeof(entry_priority), 1, file);
+}
+
+void
+serialize_todo_list(const char* filename, entries_da* da) {
+  FILE* file = fopen(filename, "wb");
+  for(uint32_t i = 0; i < da->count; i++) {
+    serialize_todo_entry(file, da->entries[i]);
+  }
+  fclose(file);
+}
+
+todo_entry*  
+deserialize_todo_entry(FILE* file) {
+  // Allocate entry
+  todo_entry *entry = malloc(sizeof(todo_entry));
+
+  // Read if entry is completed
+  if (fread(&entry->completed, sizeof(bool), 1, file) != 1) {
+    free(entry);
+    return NULL;
+  }
+
+  // Read the length of the description
+  size_t desc_len;
+  if (fread(&desc_len, sizeof(size_t), 1, file) != 1) {
+    free(entry);
+    return NULL;
+  }
+  
+  // Allocating space to store the entries description
+  entry->desc = malloc(desc_len);
+  if (!entry->desc) {
+    free(entry);
+    return NULL;
+  }
+  // Read the description from the file
+  if (fread(entry->desc, sizeof(char), desc_len, file) != desc_len) {
+    free(entry->desc);
+    free(entry);
+    return NULL;
+  }
+
+  // Read the date length from the file
+  size_t date_len;
+  if (fread(&date_len, sizeof(size_t), 1, file) != 1) {
+    free(entry->desc);
+    free(entry);
+    return NULL;
+  }
+  // Allocating space for the date
+  entry->date = malloc(date_len);
+  if (!entry->date) {
+    free(entry->desc);
+    free(entry);
+    return NULL;
+  }
+  // Reading the date string
+  if (fread(entry->date, sizeof(char), date_len, file) != date_len) {
+    free(entry->desc);
+    free(entry->date);
+    free(entry);
+    return NULL;
+  }
+
+  // Reading the entires priority
+  if (fread(&entry->priority, sizeof(entry_priority), 1, file) != 1) {
+    free(entry->desc);
+    free(entry->date);
+    free(entry);
+    return NULL;
+  }
+
+  return entry;
+}
+void deserialize_todo_list(const char* filename, entries_da* da) {
+  FILE *file = fopen(filename, "rb");
+  if(!file) {
+    // If file does not exist, create it 
+    file = fopen(TODO_DATA_FILE, "w");
+    fclose(file);
+  }
+  file = fopen(filename, "rb");
+  todo_entry *entry;
+  while ((entry = deserialize_todo_entry(file)) != NULL) {
+    entries_da_push(da, entry);
+  }
+  fclose(file);
+}
+
 
 int 
 main() {
