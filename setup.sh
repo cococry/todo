@@ -19,5 +19,5 @@ cd leif
 make && sudo make install
 cd ..
 rm -rf leif
-make
-./todo
+make && sudo make install
+todo
