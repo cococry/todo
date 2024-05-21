@@ -3,7 +3,7 @@
 <img src=https://github.com/cococry/todo/blob/main/branding/todo-showcase.png alt="Todo Showcase">
 
 ## Overview
-*todo* is a GUI task management that does one job, which is managing & storing your tasks. The app is written completly in C in under 800 lines of code. 
+*todo* is a GUI task management utility that does one job, which is managing & storing your tasks. The app is written completly in C in under 800 lines of code. 
 
 It supports serialization & deserialization of tasks. Furthmore, the app implements a priority system for your tasks and the displayed tasks are sorted from high to low priority.
 There is also a filtering system that filters tasks after different critia (eg. completed, high priority,in progress). 
