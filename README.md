@@ -14,6 +14,15 @@ The application is designed with configuration in mind and editing the config.h 
 
 The UI of the applicaton is written entirely with the [leif](https://github.com/cococry/leif) UI library which is a small immediate mode UI framework that i've written. The rendering is done with modern OpenGL by utilising a batch rendering system under the hood. As *todo* using any big UI framework like QT or GTK, it can be considered as very [suckless](https://suckless.org/philosophy).
 
+## Terminal Interface
+
+todo can also be used in the terminal without any gui if you prefer that. There are subcommands for every action that can
+be done in the UI. For more information:
+
+```console
+todo --help
+```
+
 ## Quick Start
 
 On Linux:
