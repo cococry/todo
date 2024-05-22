@@ -36,6 +36,9 @@ elif [[ "$answer" == "n" ]]; then
     echo "todo has been installed to your system."
     echo "It can be launched from terminal with 'todo'." 
     echo "A .desktop file is also installed so you can find it in your application launcher."
+
+    echo "You can also use a terminal interface for todo:"
+    todo --help
 else
     echo "Invalid input. Please enter y or n."
 fi
