@@ -1,5 +1,6 @@
 #include <GL/gl.h>
 #include <GLFW/glfw3.h>
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <leif/leif.h>
@@ -67,6 +68,7 @@ static void         renderentries();
 
 static void         initwin();
 static void         initui();
+static void         initentries();
 static void         terminate();
 
 static void         renderdashboard();
@@ -87,6 +89,9 @@ static void         serialize_todo_entry(FILE* file, todo_entry* entry);
 static void         serialize_todo_list(const char* filename, entries_da* da);
 static todo_entry*  deserialize_todo_entry(FILE* file);
 static void         deserialize_todo_list(const char* filename, entries_da* da);
+
+static void         print_requires_argument(const char* option, uint32_t numargs);
+static void         str_to_lower(char* str);
 
 static state s;
 
@@ -362,7 +367,11 @@ initui() {
   s.backicon = lf_load_texture(BACK_ICON, true, LF_TEX_FILTER_LINEAR);
   s.removeicon = lf_load_texture(REMOVE_ICON, true, LF_TEX_FILTER_LINEAR);
   s.raiseicon = lf_load_texture(RAISE_ICON, true, LF_TEX_FILTER_LINEAR);
+  initentries();
+}
 
+void 
+initentries() {
   strcat(s.tododata_file, TODO_DATA_DIR);
   strcat(s.tododata_file, "/");
   strcat(s.tododata_file, TODO_DATA_FILE);
@@ -737,9 +746,167 @@ void deserialize_todo_list(const char* filename, entries_da* da) {
   fclose(file);
 }
 
+void print_requires_argument(const char* option, uint32_t numargs) {
+  printf("todo: option requires %i argument(s): '%s'\n", numargs, option);
+  printf("Try todo --help for more information\n");
+}
+
+void str_to_lower(char* str) {
+  while(*str) {
+    *str = tolower((unsigned char)*str);
+    str++;
+  }
+}
 
 int 
-main() {
+main(int argc, char** argv) {
+  // Handle terminal interface
+  if(argc > 1) {
+    initentries();
+    char* subcmd = argv[1];
+    str_to_lower(subcmd);
+    if(strcmp(subcmd, "--help") == 0 || strcmp(subcmd, "-h") == 0) {
+      printf("Usage: todo [OPTION...] [ARGUMENTS...]\n");
+      printf("\t-h, --help                        Open help menu\n");
+      printf("\t-l, --list                        Display todo list\n");
+      printf("\t-a, --add \"[desc]\" [priority]     Add a new task to the todo list\n");
+      printf("\t-r, --remove [idx]                Remove a task with a given index from the list.\n");
+      printf("\t-d, --done [idx]                  Mark a task with a given index as completed.\n");
+      printf("\t-n, --not-done [idx]              Mark a task with a given index as not completed.\n");
+      printf("\t-r, --raise [idx]                 Raises a task with a given index to the top.\n");
+    }
+    else if(strcmp(subcmd, "--list") == 0 || strcmp(subcmd, "-l") == 0) {
+      printf("======== Your To Do ========\n");
+      char* priorities_str[] = {
+        "L", "M", "H"
+      };
+      sort_entries_by_priority(&s.todo_entries);
+      for(uint32_t i = 0; i < s.todo_entries.count; i++) {
+        todo_entry* entry = s.todo_entries.entries[i];
+        printf("%i | (%s) [%c]: %s\n", i, priorities_str[entry->priority], entry->completed ? 'x' : ' ', entry->desc);
+      }
+      if(!s.todo_entries.count) {
+        printf("There is nothing here.\n");
+      }
+      printf("============================\n");
+    } 
+    else if(strcmp(subcmd, "--add") == 0 || strcmp(subcmd, "-a") == 0) {
+      if(argc < 4) {
+        print_requires_argument(argv[1], 2);
+        return EXIT_FAILURE;
+      }
+      char* desc = argv[2];
+      char* priority_str = argv[3];
+
+      str_to_lower(priority_str);
+
+      entry_priority priority;
+      if(strcmp(priority_str, "low") == 0) 
+        priority = PRIORITY_LOW;
+      else if(strcmp(priority_str, "medium") == 0) 
+        priority = PRIORITY_MEDIUM;
+      else if(strcmp(priority_str, "high") == 0)
+        priority = PRIORITY_HIGH;
+      else {
+        printf("todo: invalid priority given: '%s' (valid priorities: {low, medium, high})\n", priority_str);
+        return EXIT_FAILURE;
+      }
+      todo_entry* entry = (todo_entry*)malloc(sizeof(todo_entry));
+      entry->priority = priority;
+      entry->desc = desc;
+      entry->completed = false;
+      entry->date = get_command_output(DATE_CMD);
+
+      entries_da_push(&s.todo_entries, entry);
+      serialize_todo_list(s.tododata_file, &s.todo_entries);
+
+      printf("todo: added new entry to do list.\n");
+
+      free(entry);
+      entry = NULL;
+    }
+    else if(strcmp(subcmd, "--remove") == 0 || strcmp(subcmd, "-r") == 0) {
+      if(argc < 3) {
+        print_requires_argument(argv[1], 1);
+        return EXIT_FAILURE;
+      }
+      int32_t idx = atoi(argv[2]);
+      if(idx < 0 || idx >= s.todo_entries.count) {
+        printf("todo: index for removal out of bounds.\n");
+        return EXIT_FAILURE;
+      }
+      char* entry_desc = malloc(strlen(s.todo_entries.entries[idx]->desc));
+      strcpy(entry_desc, s.todo_entries.entries[idx]->desc);
+
+      entries_da_remove_i(&s.todo_entries, idx);
+      serialize_todo_list(s.tododata_file, &s.todo_entries);
+
+      printf("todo: removed item %i ('%s') from list.\n", idx, entry_desc);
+
+      free(entry_desc);
+      entry_desc = NULL;
+    }
+    else if(strcmp(subcmd, "--done") == 0 || strcmp(subcmd, "-d") == 0) {
+      if(argc < 3) {
+        print_requires_argument(argv[1], 1);
+        return EXIT_FAILURE;
+      }
+      int32_t idx = atoi(argv[2]);
+      if(idx < 0 || idx >= s.todo_entries.count) {
+        printf("todo: index for marking as done out of bounds.\n");
+        return EXIT_FAILURE;
+      }
+
+      todo_entry* entry = s.todo_entries.entries[idx];
+      entry->completed = true;
+      serialize_todo_list(s.tododata_file, &s.todo_entries);
+
+      printf("todo: marked item %i ('%s') as done.\n", idx, entry->desc);
+    }
+    else if(strcmp(subcmd, "--not-done") == 0 || strcmp(subcmd, "-n") == 0) {
+      if(argc < 3) {
+        print_requires_argument(argv[1], 1);
+        return EXIT_FAILURE;
+      }
+      int32_t idx = atoi(argv[2]);
+      if(idx < 0 || idx >= s.todo_entries.count) {
+        printf("todo: index for marking as not done out of bounds.\n");
+        return EXIT_FAILURE;
+      }
+
+      todo_entry* entry = s.todo_entries.entries[idx];
+      entry->completed = false;
+      serialize_todo_list(s.tododata_file, &s.todo_entries);
+
+      printf("todo: marked item %i ('%s') as not done.\n", idx, entry->desc);
+    }
+    else if(strcmp(subcmd, "--raise") == 0 || strcmp(subcmd, "-r") == 0) {
+      if(argc < 3) {
+        print_requires_argument(argv[1], 1);
+        return EXIT_FAILURE;
+      }
+      int32_t idx = atoi(argv[2]);
+      if(idx < 0 || idx >= s.todo_entries.count) {
+        printf("todo: index for raising out of bounds.\n");
+        return EXIT_FAILURE;
+      }
+
+      todo_entry* tmp = s.todo_entries.entries[0];
+      s.todo_entries.entries[0] = s.todo_entries.entries[idx];
+      s.todo_entries.entries[idx] = tmp;
+
+      serialize_todo_list(s.tododata_file, &s.todo_entries);
+
+      printf("todo: raised item %i ('%s') to the top.\n", idx, s.todo_entries.entries[0]->desc);
+    }
+    else {
+      printf("todo: invalid option: '%s'.\n", argv[1]);
+      printf("Try todo --help for more information.\n");
+      return EXIT_FAILURE;
+    }
+    return EXIT_SUCCESS;
+  }
+
   initwin();
   initui();
 
