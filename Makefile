@@ -3,14 +3,16 @@ BIN=todo
 SOURCE=*.c
 LIBS=-lglfw -lleif -lclipboard -lm -lGL -lxcb
 
+.PHONY: all clean install uninstall
+
 all:
-	${CC} -o ${BIN} ${SOURCE} ${LIBS}
+	$(CC) -o $(BIN) $(SOURCE) $(LIBS)
 
 clean:
-	rm -f ${BIN}
+	rm -f $(BIN)
 
 install:
-	cp ${BIN} /usr/bin/
+	cp $(BIN) /usr/bin/
 	cp ./todo.desktop /usr/share/applications
 	@mkdir -p /usr/share/icons/todo
 	cp ./appicon/appicon.png /usr/share/icons/todo
