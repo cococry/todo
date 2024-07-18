@@ -6,9 +6,18 @@ set -e
 # Change to the directory where the script is located
 cd "$(dirname "$0")"
 
-# Fix for new users. Installing libraries
-sudo apt-get install -y pkg-config libglfw3 libglfw3-dev mesa-common-dev libglu1-mesa-dev libxcb1-dev
-sudo apt autoremove
+# Check if apt is available (for Debian-based distributions)
+if hash apt >/dev/null 2>&1; then
+  # Install required packages
+  sudo apt-get install -y pkg-config libglfw3 libglfw3-dev mesa-common-dev libglu1-mesa-dev libxcb1-dev
+  sudo apt autoremove
+elif hash dnf >/dev/null 2>&1; then
+  # Install required packages (for RHEL-based distributions)
+  sudo dnf install -y pkgconfig-glfw3-devel mesa-libGL-devel mesa-libGLU-devel libX11-devel
+else
+  echo "Error: Neither apt nor dnf package manager found. Cannot install required packages."
+  exit 1
+fi
 
 # Clone, build, and install cglm
 git clone https://github.com/recp/cglm
