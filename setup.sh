@@ -14,8 +14,11 @@ if hash apt >/dev/null 2>&1; then
 elif hash dnf >/dev/null 2>&1; then
   # Install required packages (for RHEL-based distributions)
   sudo dnf install -y pkgconfig-glfw3-devel mesa-libGL-devel mesa-libGLU-devel libX11-devel
+elif hash pacman >/dev/null 2>&1; then
+  # Install required packages (for Arch-based distributions)
+  sudo pacman -S --noconfirm pkgconf glfw-x11 mesa libglvnd
 else
-  echo "Error: Neither apt nor dnf package manager found. Cannot install required packages."
+  echo "Error: No supported package manager (apt, dnf, pacman) found. Cannot install required packages."
   exit 1
 fi
 
