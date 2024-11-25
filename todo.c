@@ -913,7 +913,7 @@ main(int argc, char** argv) {
   vec4s bgcol = lf_color_to_zto(BG_COLOR);
   while(!glfwWindowShouldClose(s.win)) {
     glClear(GL_COLOR_BUFFER_BIT);
-    glClearColor(bgcol.r, bgcol.g, bgcol.b, bgcol.a);
+    glClearColor(bgcol.r / 255.0f, bgcol.g / 255.0f, bgcol.b / 255.0f, bgcol.a / 255.0f);
 
     lf_begin();
    
